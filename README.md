@@ -607,6 +607,12 @@ ros2 topic info /policy_deploy_node/mode_selectors -v
 ros2 param get /policy_deploy_node use_sim_time
 ```
 
+```bash
+ros2 node list
+ros2 topic info /policy_deploy_node/mode_selectors -v
+ros2 topic echo /policy_deploy_node/transition/status
+```
+
 For the real-robot launch above, `use_sim_time` should be `false`. If the
 selector has no subscription or there is no transition status, check the policy
 node's terminal and confirm that it loaded the mixed policy. The launch file
