@@ -596,6 +596,46 @@ ros2 topic echo /policy_deploy_node/transition/status
 For BB use `[-1.0, -1.0]`, FB use `[1.0, -1.0]`, and FF use `[1.0, 1.0]`.
 The final mode remains selected without repeatedly publishing the selector.
 
+### Troubleshooting mode requests on the robot
+
+In each diagnostic terminal, source the same ROS and workspace environments as
+the policy node. Check that the node exists and the selector has a subscription:
+
+```bash
+ros2 node list
+ros2 topic info /policy_deploy_node/mode_selectors -v
+ros2 param get /policy_deploy_node use_sim_time
+```
+
+For the real-robot launch above, `use_sim_time` should be `false`. If the
+selector has no subscription or there is no transition status, check the policy
+node's terminal and confirm that it loaded the mixed policy. The launch file
+defaults to a different example unless `example:=exported_mixed_no_upper_body`
+is specified. If the package was changed, rebuild, install, and re-source it.
+
+Monitor status in one terminal and send a request from another:
+
+```bash
+ros2 topic echo /policy_deploy_node/transition/status
+```
+
+Before sending a request, visually confirm the robot is standing on all four
+feet and stationary, and set commanded velocity to zero. Press and release Y
+or send the BF selector command above. An accepted request does not print a
+confirmation log; look for `phase=braking` followed by other phases. The active
+mode changes after the transition progresses. If `active_mode=1` while idle,
+BF is already active, so another BF request causes no change or warning.
+`active_mode=-1`, invalid feedback, or a non-idle phase means the node is not
+ready for a new request. Check the `reason` field and the policy-node terminal
+for startup or rejection messages; once ready, recheck the stance and retry.
+
+To check the joystick, run `ros2 topic echo /joy` and press and release Y.
+With the default mapping, `buttons[3]` should change. If it does not, identify
+the correct index from the message and configure the launch arguments above.
+Release a button before pressing it again; simultaneous face-button presses
+are ignored. If a transition reaches `phase=blocked`, safely stabilize the
+robot before restarting the deployment node.
+
 Alternatively start the node directly, passing the mixed bundle paths:
 
 ```bash
