@@ -231,6 +231,7 @@ if(BUILD_ROS_NODE)
         target_link_libraries(ros_mixed_mode_receiver_test PRIVATE
             Eigen3::Eigen rclcpp::rclcpp
             std_msgs::std_msgs__rosidl_typesupport_cpp
+            sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
         )
         add_test(NAME ros_mixed_mode_receiver_test COMMAND ros_mixed_mode_receiver_test)
         set_tests_properties(ros_mixed_mode_receiver_test PROPERTIES TIMEOUT 30)

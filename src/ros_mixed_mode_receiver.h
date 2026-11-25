@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <mutex>
+#include <array>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/joy.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 
 namespace policy_deploy {
@@ -23,6 +25,9 @@ private:
     mutable std::mutex mutex_;
     Snapshot value_;
     rclcpp::Subscription<Array>::SharedPtr selector_subscription_;
+    rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_subscription_;
+    std::array<std::int64_t, 4> button_indices_;
+    std::array<bool, 4> button_down_{};
 };
 
 } // namespace policy_deploy

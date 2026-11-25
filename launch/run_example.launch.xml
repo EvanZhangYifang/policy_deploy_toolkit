@@ -10,6 +10,10 @@
       <arg name="joint_velocity_limit_scale" default="1.0" />
       <!-- Must match the physical starting pose; an empty value requires a selector message. -->
       <arg name="initial_mode" default="bb" />
+      <arg name="mode_button_bb" default="2" />
+      <arg name="mode_button_bf" default="3" />
+      <arg name="mode_button_fb" default="1" />
+      <arg name="mode_button_ff" default="0" />
 
       <node pkg="policy_deploy_toolkit"
             exec="deploy_policy_node"
@@ -21,6 +25,10 @@
             <param name="allow_missing_robot_joints" value="$(var allow_missing_robot_joints)"/>
             <param name="joint_velocity_limit_scale" value="$(var joint_velocity_limit_scale)"/>
             <param name="initial_mode" value="$(var initial_mode)" type="str"/>
+            <param name="mode_button_bb" value="$(var mode_button_bb)" type="int"/>
+            <param name="mode_button_bf" value="$(var mode_button_bf)" type="int"/>
+            <param name="mode_button_fb" value="$(var mode_button_fb)" type="int"/>
+            <param name="mode_button_ff" value="$(var mode_button_ff)" type="int"/>
             <remap from="/policy_deploy_node/sensors/height_scanner/points" to="/heightscan"/> 
       </node>
 

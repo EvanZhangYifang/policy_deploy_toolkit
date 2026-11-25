@@ -533,7 +533,13 @@ The launch file reads the example from the **installed package share**. Rebuild
 and re-source after copying or changing its files unless the installation uses
 symlinks and already exposes them. It starts the policy node and joystick
 teleoperation; the robot/XBot2 parameter server, robot joint state and IMU
-must already be available. The joystick controls velocity, not the mode selector.
+must already be available. The joystick controls velocity and requests modes:
+X selects BB, Y selects BF, B selects FB, and A selects FF. These defaults use
+button indices 2, 3, 1, and 0 respectively. For a different controller, inspect
+`ros2 topic echo /joy` and set the launch arguments `mode_button_bb`,
+`mode_button_bf`, `mode_button_fb`, and `mode_button_ff` to distinct indices.
+Release and press a button again to retry a rejected request; simultaneous face
+buttons are ignored. The `/joy` topic can be remapped when launching the node.
 
 The launch defaults to the BB starting mode. It checks the measured joint pose,
 position reference, IMU orientation and angular velocity, and joint velocities
@@ -547,7 +553,7 @@ actual starting mode through the first selector message instead, set
 
 Before every mode request, visually confirm the robot is standing on all four
 feet on flat ground and is stationary; set the commanded velocity to zero.
-Sending the selector confirms this visual check. Requests sent before startup
+Pressing a mode button or sending the selector confirms this visual check. Requests sent before startup
 completes, while a transition is running, or with a nonzero commanded velocity
 are rejected. When status reports `phase=idle`, recheck stance and resend.
 The controller keeps the policy velocity command zero throughout the transition.

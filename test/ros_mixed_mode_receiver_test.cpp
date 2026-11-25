@@ -17,9 +17,11 @@ int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     try {
         auto node = std::make_shared<rclcpp::Node>("mixed_receiver_test",
-            rclcpp::NodeOptions().use_intra_process_comms(true));
+            rclcpp::NodeOptions().use_intra_process_comms(true).arguments(
+                {"--ros-args", "-r", "/joy:=/mixed_receiver_test_joy"}));
         policy_deploy::RosMixedModeReceiver receiver(*node);
         auto modes = node->create_publisher<Array>("~/mode_selectors", 1);
+        auto joy = node->create_publisher<sensor_msgs::msg::Joy>("/joy", rclcpp::SensorDataQoS());
         rclcpp::executors::SingleThreadedExecutor executor;
         executor.add_node(node);
         auto spin = [&] {
@@ -28,7 +30,7 @@ int main(int argc, char** argv) {
             while(std::chrono::steady_clock::now() < end);
         };
         auto deadline = std::chrono::steady_clock::now() + 3s;
-        while(!modes->get_subscription_count()) {
+        while(!modes->get_subscription_count() || !joy->get_subscription_count()) {
             check(std::chrono::steady_clock::now() < deadline, "topic discovery failed"); spin();
         }
         check(receiver.snapshot().requested_mode == -1 && receiver.snapshot().request_sequence == 0,
@@ -52,6 +54,26 @@ int main(int argc, char** argv) {
         mode.data = {-1, -1}; modes->publish(mode); spin();
         check(receiver.snapshot().requested_mode == 0 && receiver.snapshot().request_sequence == 5,
               "BB request missing");
+        sensor_msgs::msg::Joy buttons; buttons.buttons = {0, 0, 0, 0};
+        joy->publish(buttons); spin();
+        const int indices[] = {2, 3, 1, 0};
+        for (int i = 0; i < 4; ++i) {
+            buttons.buttons[indices[i]] = 1; joy->publish(buttons); spin();
+            s = receiver.snapshot();
+            check(s.requested_mode == i && s.request_sequence == static_cast<std::uint64_t>(6 + i),
+                  "joystick mode request missing");
+            joy->publish(buttons); spin();
+            check(receiver.snapshot().request_sequence == s.request_sequence, "held button retriggered");
+            buttons.buttons[indices[i]] = 0; joy->publish(buttons); spin();
+        }
+        buttons.buttons = {1, 1, 0, 0}; joy->publish(buttons); spin();
+        check(receiver.snapshot().request_sequence == 9, "button combination accepted");
+        buttons.buttons = {0, 0, 0, 0}; joy->publish(buttons); spin();
+        buttons.buttons = {1}; joy->publish(buttons); spin();
+        check(receiver.snapshot().request_sequence == 9, "short joystick message accepted");
+        buttons.buttons = {1, 0, 0, 0}; joy->publish(buttons); spin();
+        check(receiver.snapshot().request_sequence == 10 && receiver.snapshot().requested_mode == 3,
+              "button retry after release missing");
     } catch(const std::exception& e) {
         std::cerr << e.what() << '\n'; rclcpp::shutdown(); return 1;
     }
