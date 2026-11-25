@@ -94,7 +94,7 @@ class MjOnnxBridge:
     def __init__(self, model, data, policy_path, metadata_path, *, base_body='base_link',
                  imu_site='imu_link', obs_group='', joint_velocity_limit=np.inf,
                  commands=None, height_scan_shape=(17, 11),
-                 height_scan_spacing=(0.1, 0.1)):
+                 height_scan_spacing=(0.1, 0.1), mode=None):
         self.model = model
         self.profile = None
         self.data = data
@@ -163,6 +163,19 @@ class MjOnnxBridge:
         self._policy_args = (str(policy_path), str(metadata_path), obs_group, robot)
         self.policy = OnnxPolicy(*self._policy_args)
         self.info = self.policy.policyInfo()
+        self._mixed_mode = None
+        if self.info.mixed_modes:
+            if mode not in ('bb', 'bf', 'fb', 'ff'):
+                raise ValueError('Mixed policy requires an explicit mode: bb, bf, fb or ff')
+            matching = [entry for entry in self.info.mixed_modes if entry.name == mode]
+            if len(matching) != 1:
+                raise ValueError(f'Mixed policy metadata has no unique mode {mode!r}')
+            self._mixed_mode = matching[0]
+            defaults = self._mixed_mode.joint_reference_rad
+        else:
+            if mode is not None:
+                raise ValueError('--mode is only supported for mixed policies')
+            defaults = self.info.joint_default_pos
         ratio = self.info.control_dt / model.opt.timestep
         if not np.isfinite(ratio) or ratio < 1 or not np.isclose(ratio, round(ratio), rtol=0, atol=1e-8):
             raise ValueError('Policy control_dt must be an integer multiple of the MuJoCo timestep')
@@ -176,7 +189,7 @@ class MjOnnxBridge:
 
         # Initialize policy joints in robot order; other actuated joints hold qpos0.
         for policy_id, robot_id in enumerate(self.info.joint_id_policy_to_robot):
-            self.data.qpos[self.qpos_ids[robot_id]] = self.info.joint_default_pos[policy_id]
+            self.data.qpos[self.qpos_ids[robot_id]] = defaults[policy_id]
         self.data.ctrl[self.actuator_ids] = np.where(self.integral, 0, self.data.qpos[self.qpos_ids])
         for actuator in self.actuator_ids[self.integral]:
             joint = model.actuator_trnid[actuator, 0]
@@ -270,6 +283,8 @@ class MjOnnxBridge:
 
     def _initialize_io(self, commands):
         self.inputs = Inputs()
+        if self._mixed_mode is not None:
+            self.inputs.mode_selectors = self._mixed_mode.selectors
         self.outputs = Outputs(self.info.action_size, len(self.joint_ids))
         self.outputs.q_des = self.data.qpos[self.qpos_ids].copy()
         self.outputs.k_des = self.model.actuator_gainprm[self.actuator_ids, 0].copy()
@@ -596,6 +611,8 @@ def add_arguments(parser):
     parser.add_argument('--base-body', default='base_link')
     parser.add_argument('--imu-site', default='imu_link')
     parser.add_argument('--obs-group', default='')
+    parser.add_argument('--mode', choices=('bb', 'bf', 'fb', 'ff'),
+                        help='Required starting mode for a mixed policy; fixed for the simulation')
     parser.add_argument('--joint-velocity-limit', type=_positive, default=np.inf,
                         help='Uniform joint speed limit; default: unbounded (MuJoCo has no joint velocity limits)')
     parser.add_argument('--command', action='append', default=[], metavar='NAME=V1,V2,...',
@@ -661,7 +678,7 @@ class Simulation:
                 args.metadata or args.policy.with_name('deploy_metadata.yaml'),
                 base_body=args.base_body, imu_site=args.imu_site, obs_group=args.obs_group,
                 joint_velocity_limit=args.joint_velocity_limit, commands=commands,
-                remote_control_endpoint=args.remote_control_endpoint,
+                mode=getattr(args, 'mode', None), remote_control_endpoint=args.remote_control_endpoint,
                 height_scan_shape=args.height_scan_shape, height_scan_spacing=args.height_scan_spacing)
 
         self.runner = _profile_call(self.profile, 'Model / policy setup', create_runner)

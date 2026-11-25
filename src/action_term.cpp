@@ -298,7 +298,10 @@ void IsaacLabJointPositionActionTerm::process_impl(const Eigen::VectorXd &raw_ac
         }
 
         // clamp to joint position limits
-        float q_des = raw_action(i) * _scale + _policy_info.joint_default_pos[policy_id] + _offset;
+        const auto& reference = _policy_info.mixed_modes.empty()
+            ? _policy_info.joint_default_pos
+            : mixed_mode_for_selectors(_policy_info, inputs.mode_selectors).joint_reference_rad;
+        float q_des = raw_action(i) * _scale + reference.at(policy_id) + _offset;
         float q_des_clamped = std::clamp(q_des, 
             _robot_info.joint_pos_min(robot_id), 
             _robot_info.joint_pos_max(robot_id)

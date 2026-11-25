@@ -48,6 +48,48 @@ OnnxPolicy::OnnxPolicy(std::string model_path,
         policy_info.joint_default_vel.assign(policy_info.joint_default_pos.size(), 0.0);
     }
     policy_info.joint_names = md["joint_names"].as<std::vector<std::string>>();
+    if(auto modes = md["mixed_modes"])
+    {
+        if(!modes.IsMap() || modes.size() != 4 || policy_info.joint_names.size() != 12)
+            throw std::runtime_error("mixed_modes requires four modes and 12 policy joints");
+        for(const auto& entry : modes)
+        {
+            MixedMode mode;
+            mode.name = entry.first.as<std::string>();
+            auto selectors = entry.second["selectors"].as<std::vector<double>>();
+            mode.joint_reference_rad = entry.second["joint_reference_rad"].as<std::vector<double>>();
+            if(selectors.size() != 2 || mode.joint_reference_rad.size() != policy_info.joint_names.size()
+               || (selectors[0] != -1.0 && selectors[0] != 1.0)
+               || (selectors[1] != -1.0 && selectors[1] != 1.0)
+               || !std::all_of(mode.joint_reference_rad.begin(), mode.joint_reference_rad.end(),
+                               [](double v) { return std::isfinite(v); }))
+                throw std::runtime_error("Invalid mixed mode selectors or joint reference");
+            const bool canonical =
+                (mode.name == "bb" && selectors[0] == -1.0 && selectors[1] == -1.0) ||
+                (mode.name == "bf" && selectors[0] == -1.0 && selectors[1] ==  1.0) ||
+                (mode.name == "fb" && selectors[0] ==  1.0 && selectors[1] == -1.0) ||
+                (mode.name == "ff" && selectors[0] ==  1.0 && selectors[1] ==  1.0);
+            if(!canonical) throw std::runtime_error("Mixed mode name and selectors do not match the canonical mapping");
+            mode.selectors << selectors[0], selectors[1];
+            for(const auto& previous : policy_info.mixed_modes)
+                if((previous.selectors.array() == mode.selectors.array()).all())
+                    throw std::runtime_error("Duplicate mixed mode selectors");
+            policy_info.mixed_modes.push_back(std::move(mode));
+        }
+        auto actions = md["actions"];
+        if(!actions.IsMap() || actions.size() != 1)
+            throw std::runtime_error("Mixed policy requires exactly one position action");
+        const auto cfg = actions.begin()->second["cfg"];
+        const auto class_type = cfg["class_type"].as<std::string>();
+        if(class_type != "isaaclab.envs.mdp.actions.joint_actions:JointPositionAction"
+           || cfg["joint_names"].as<std::vector<std::string>>() != policy_info.joint_names
+           || !cfg["use_default_offset"].as<bool>())
+            throw std::runtime_error("Mixed policy requires an ordered position action on all policy joints");
+        policy_info.mixed_action_scale = cfg["scale"].as<double>();
+        if(!std::isfinite(policy_info.mixed_action_scale) || policy_info.mixed_action_scale <= 0.0
+           || cfg["offset"].as<double>(0.0) != 0.0)
+            throw std::runtime_error("Invalid mixed policy action scale or offset");
+    }
     policy_info.action_size = _output_tensors[_action_output_index].buffer.size();
     // -1 marks a policy joint with no robot counterpart (only valid when allow_missing_robot_joints is set)
     policy_info.joint_id_policy_to_robot.assign(policy_info.joint_names.size(), -1);
@@ -70,7 +112,7 @@ OnnxPolicy::OnnxPolicy(std::string model_path,
         const auto it = robot_joint_ids.find(policy_info.joint_names[policy_id]);
         if(it == robot_joint_ids.end())
         {
-            if(!allow_missing_robot_joints)
+            if(!allow_missing_robot_joints || !policy_info.mixed_modes.empty())
             {
                 throw std::runtime_error("Policy joint '" + policy_info.joint_names[policy_id] + "' not found in robot joint names");
             }
@@ -85,6 +127,9 @@ OnnxPolicy::OnnxPolicy(std::string model_path,
         policy_info.joint_id_policy_to_robot[policy_id] = robot_id;
         policy_info.joint_id_robot_to_policy[robot_id] = static_cast<int>(policy_id);
     }
+
+    if(!policy_info.mixed_modes.empty() && policy_info.action_size != policy_info.joint_names.size())
+        throw std::runtime_error("Mixed policy action count must equal the leg joint count");
 
     // parse commands config
     auto cmd_cfg = md["commands"];
@@ -222,6 +267,11 @@ OnnxPolicy::OnnxPolicy(std::string model_path,
     _policy_info = std::move(policy_info);
 }
 
+bool OnnxPolicy::is_mixed_mode() const
+{
+    return !_policy_info.mixed_modes.empty();
+}
+
 PolicyInfo OnnxPolicy::policyInfo() const
 {
     return _policy_info;
@@ -289,7 +339,26 @@ bool OnnxPolicy::run(const Inputs& inputs, Outputs& outputs)
 {
     // Convert robot/control state into the ONNX input layout. This is intentionally
     // isolated because the exact packing will come from the metadata file.
-    _fillInputBuffers(inputs, outputs);
+    // For mixed policies the previous action is the previously commanded physical
+    // target expressed relative to the currently selected mode. This also rebases
+    // it atomically when the transition controller commits a new mode.
+    Inputs effective_inputs = inputs;
+    if(is_mixed_mode())
+    {
+        const auto& mode = mixed_mode_for_selectors(_policy_info, inputs.mode_selectors);
+        effective_inputs.last_action.resize(_policy_info.action_size);
+        for(std::size_t i = 0; i < _policy_info.joint_names.size(); ++i)
+        {
+            const int robot_id = _policy_info.joint_id_policy_to_robot[i];
+            if(robot_id < 0 || robot_id >= outputs.q_des.size())
+                throw std::runtime_error("Mixed policy requires every leg joint and an initialized prior target");
+            if(!std::isfinite(outputs.q_des(robot_id)))
+                throw std::runtime_error("Mixed policy prior target is not finite");
+            effective_inputs.last_action(i) = (outputs.q_des(robot_id) - mode.joint_reference_rad[i])
+                                              / _policy_info.mixed_action_scale;
+        }
+    }
+    _fillInputBuffers(effective_inputs, outputs);
     // Packing may resize or rename buffers once metadata support lands, so rebuild
     // the raw ORT name arrays immediately before execution.
     _refreshNamePointers();
@@ -346,7 +415,7 @@ bool OnnxPolicy::run(const Inputs& inputs, Outputs& outputs)
     _updateRecurrentState();
 
     // Convert raw policy outputs into the typed Eigen output fields expected by the caller.
-    _fillOutputs(inputs, outputs);
+    _fillOutputs(effective_inputs, outputs);
 
     return true;
 }

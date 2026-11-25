@@ -99,6 +99,13 @@ public:
 
 };
 
+class MixedModeSelectorsObsTerm : public ObsTerm
+{
+public:
+    MixedModeSelectorsObsTerm(RobotInfo robot_info, PolicyInfo policy_info, YAML::Node config);
+    void process_impl(const Inputs& inputs, Eigen::VectorXd& output) override;
+};
+
 class KyonIsaacJointPosErrorObsTerm : public ObsTerm
 {
 public:

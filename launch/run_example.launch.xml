@@ -8,28 +8,37 @@
       <arg name="actor_obs_group" default="policy" />
       <arg name="allow_missing_robot_joints" default="false" />
       <arg name="joint_velocity_limit_scale" default="1.0" />
+      <!-- Must match the physical starting pose; an empty value requires a selector message. -->
+      <arg name="initial_mode" default="bb" />
 
       <node pkg="policy_deploy_toolkit"
             exec="deploy_policy_node"
+            name="policy_deploy_node"
             output="screen"
             args="$(var example_dir)/policy.onnx $(var example_dir)/deploy_metadata.yaml">
             <param name="use_sim_time" value="$(var use_sim_time)"/>
             <param name="obs_group_override" value="$(var actor_obs_group)"/>
             <param name="allow_missing_robot_joints" value="$(var allow_missing_robot_joints)"/>
             <param name="joint_velocity_limit_scale" value="$(var joint_velocity_limit_scale)"/>
+            <param name="initial_mode" value="$(var initial_mode)" type="str"/>
             <remap from="/policy_deploy_node/sensors/height_scanner/points" to="/heightscan"/> 
       </node>
 
       <node pkg="joy"
             exec="joy_node"
             output="screen"
-            if="$(var enable_joy)" />
+            if="$(var enable_joy)">
+            <param name="use_sim_time" value="$(var use_sim_time)"/>
+      </node>
 
       <node pkg="teleop_twist_joy"
             exec="teleop_node"
             output="screen"
             if="$(var enable_joy)">
             <remap from="/cmd_vel" to="/policy_deploy_node/commands/base_velocity" />
+            <param name="use_sim_time" value="$(var use_sim_time)"/>
+            <!-- The policy command receiver expects geometry_msgs/msg/Twist. -->
+            <param name="publish_stamped_twist" value="false"/>
             <param name="axis_linear.x" value="1" />
             <param name="axis_linear.y" value="0" />
             <param name="axis_angular.yaw" value="3" />

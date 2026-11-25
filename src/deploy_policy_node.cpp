@@ -1,4 +1,7 @@
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <format>
 #include <iostream>
@@ -12,10 +15,16 @@
 #include "ros_adaptation_receiver.h"
 #include "ros_command_receiver.h"
 #include "ros_sensor_receiver.h"
+#include "ros_mixed_mode_receiver.h"
+#include "mixed_mode_transition.h"
+#include "mixed_startup_guard.h"
+#include "mixed_startup_mode.h"
+#include "manual_mode_request.h"
 #include "ros_policy_term_publisher.h"
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <xbot2_interface/robotinterface2.h>
 #include <xbot2_interface/ros2/config_from_param.hpp>
 
@@ -36,6 +45,8 @@ public:
         _allow_missing_robot_joints = declare_parameter<bool>("allow_missing_robot_joints", false);
         _command_timeout_s = declare_parameter<double>("command_timeout_s", 0.5);
         _sensor_timeout_s = declare_parameter<double>("sensor_timeout_s", 0.5);
+        _mixed_initial_mode = policy_deploy::parse_mixed_initial_mode(
+            declare_parameter<std::string>("initial_mode", "bb"));
 
         RCLCPP_INFO(get_logger(), "Obs group override: %s", _obs_group_override.c_str());
         RCLCPP_INFO(get_logger(), "Allow missing robot joints: %s", _allow_missing_robot_joints ? "true" : "false");
@@ -100,6 +111,45 @@ public:
 
         // build policy wrapper
         _policy = std::make_unique<XBot::policy::OnnxPolicy>(model_path, model_metadata_path, _obs_group_override, robot_info, _allow_missing_robot_joints);
+        if(_policy->is_mixed_mode())
+        {
+            _mixed_info = _policy->policyInfo();
+            _base_R_imu = robot_info.base_T_imu.linear();
+            std::array<Eigen::VectorXd, 4> references;
+            std::array<bool, 4> found{};
+            for(const auto& mode : _mixed_info.mixed_modes)
+            {
+                const int mode_id = (mode.selectors[0] > 0 ? 2 : 0) + (mode.selectors[1] > 0 ? 1 : 0);
+                if(found[mode_id] || mode.joint_reference_rad.size() != 12)
+                    throw std::runtime_error("Invalid mixed policy mode table");
+                found[mode_id] = true;
+                references[mode_id] = Eigen::Map<const Eigen::VectorXd>(mode.joint_reference_rad.data(), 12);
+                _mixed_selectors[mode_id] = mode.selectors;
+            }
+            if(!std::all_of(found.begin(), found.end(), [](bool x) { return x; }) ||
+               _mixed_info.joint_id_policy_to_robot.size() != 12)
+                throw std::runtime_error("Mixed policy requires four modes and twelve leg joints");
+            _mixed_lower.resize(12); _mixed_upper.resize(12); _mixed_velocity_limit.resize(12);
+            for(int i = 0; i < 12; ++i)
+            {
+                const int robot_id = _mixed_info.joint_id_policy_to_robot[i];
+                if(robot_id < 0 || robot_id >= robot_info.joint_pos_min.size())
+                    throw std::runtime_error("All mixed policy leg joints must be present on the robot");
+                _mixed_lower[i] = robot_info.joint_pos_min[robot_id];
+                _mixed_upper[i] = robot_info.joint_pos_max[robot_id];
+                _mixed_velocity_limit[i] = robot_info.joint_vel_max[robot_id];
+            }
+            _mixed_references = references;
+            _mixed_transition = std::make_unique<policy_deploy::MixedModeTransition>(_mixed_info.control_dt, references);
+            _mixed_startup_guard = std::make_unique<policy_deploy::MixedStartupGuard>(_mixed_info.control_dt);
+            _mixed_receiver = std::make_unique<policy_deploy::RosMixedModeReceiver>(*this);
+            _mixed_status_publisher = create_publisher<std_msgs::msg::String>("~/transition/status", 10);
+            RCLCPP_WARN(get_logger(), "Operator-confirmed transitions enabled: foot contact and body linear velocity are NOT monitored. Confirm a standing, stationary robot before each mode request.");
+            if(_mixed_initial_mode < 0)
+                RCLCPP_INFO(get_logger(), "Mixed policy: waiting for starting-mode selector and valid feedback");
+            else
+                RCLCPP_INFO(get_logger(), "Mixed policy: initial mode index %d; waiting for valid feedback", _mixed_initial_mode);
+        }
 
         // construct policy wrapper outputs
         _outputs = std::make_unique<XBot::policy::Outputs>(
@@ -131,7 +181,6 @@ public:
         _vec_nq.resize(_robot->getNq());
         _vec_nj.setZero(_robot->getJointNum());
 
-        _loop_start = std::chrono::steady_clock::now();
         const auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::duration<double>(_policy->policyInfo().control_dt));
 
@@ -139,6 +188,121 @@ public:
     }
 
 private:
+    void publish_mixed_status(bool feedback_valid)
+    {
+        std_msgs::msg::String msg;
+        msg.data = "phase=" + _mixed_transition->phase() +
+                   " active_mode=" + std::to_string(_mixed_transition->active_mode()) +
+                   " feedback=" + (feedback_valid ? "valid" : "invalid_or_stale") +
+                   " support_check=manual_not_monitored" +
+                   " blend=" + std::to_string(_mixed_transition->policy_blend()) +
+                   " reason=" + _mixed_transition->status();
+        _mixed_status_publisher->publish(msg);
+    }
+
+    bool prepare_mixed_step()
+    {
+        const auto sample = _mixed_receiver->snapshot();
+        policy_deploy::TransitionInput input;
+        input.joint_position.resize(12); input.joint_velocity.resize(12);
+        Eigen::VectorXd last_target(12);
+        bool finite_joints = true;
+        for(int i = 0; i < 12; ++i)
+        {
+            const int id = _mixed_info.joint_id_policy_to_robot[i];
+            input.joint_position[i] = _inputs.q[id];
+            input.joint_velocity[i] = _inputs.v[id];
+            last_target[i] = _outputs->q_des[id];
+            finite_joints = finite_joints && std::isfinite(input.joint_position[i]) &&
+                            std::isfinite(input.joint_velocity[i]) && std::isfinite(last_target[i]);
+        }
+        const double imu_norm = _inputs.w_R_imu.norm();
+        const bool imu_valid = _inputs.w_R_imu.coeffs().allFinite() && std::isfinite(imu_norm) &&
+                               imu_norm > 1e-12 && _inputs.imu_omega.allFinite();
+        if(imu_valid)
+        {
+            const Eigen::Matrix3d world_R_base = _inputs.w_R_imu.normalized().toRotationMatrix() * _base_R_imu.transpose();
+            input.gravity_body = world_R_base.transpose() * Eigen::Vector3d(0, 0, -1);
+            input.angular_velocity_body = _base_R_imu * _inputs.imu_omega;
+        }
+        auto command = _inputs.command.find("base_velocity");
+        const bool command_valid = command != _inputs.command.end() && command->second.size() == 3 &&
+                                   command->second.allFinite();
+        if(command_valid) input.requested_velocity = command->second;
+        input.valid = finite_joints && imu_valid && command_valid;
+
+        if(_mixed_transition->active_mode() < 0)
+        {
+            const auto startup = policy_deploy::select_mixed_startup_mode(
+                _mixed_initial_mode, sample.requested_mode, sample.request_sequence);
+            // A visual check is specific to an instant. A request published
+            // before startup completes must not trigger a later transition.
+            if(_mixed_initial_mode >= 0 && sample.request_sequence != _mixed_request_sequence)
+            {
+                _mixed_request_sequence = sample.request_sequence;
+                RCLCPP_WARN(get_logger(), "Ignoring mode request before startup is ready; visually check stance and send it again when idle");
+            }
+            if(!input.valid || startup.mode < 0)
+            {
+                _mixed_startup_guard->reset();
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                    "Waiting for initial mode and valid required feedback");
+                publish_mixed_status(input.valid);
+                return false;
+            }
+            const auto& reference = _mixed_references[startup.mode];
+            if(!_mixed_startup_guard->update(startup.mode, input, reference, last_target,
+                                             std::chrono::steady_clock::now()))
+            {
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "%s", _mixed_startup_guard->reason().c_str());
+                publish_mixed_status(input.valid);
+                return false;
+            }
+            _mixed_transition->initialize(startup.mode, last_target);
+            // Prior requests are discarded when a mode is configured: an
+            // earlier visual confirmation may no longer be valid.
+            _mixed_request_sequence = _mixed_initial_mode >= 0
+                ? sample.request_sequence : startup.consumed_sequence;
+        }
+        if(sample.request_sequence != _mixed_request_sequence)
+        {
+            _mixed_request_sequence = sample.request_sequence;
+            const auto decision = policy_deploy::manual_mode_request(
+                input.valid, _mixed_transition->phase() == "idle",
+                input.requested_velocity.cwiseAbs().maxCoeff());
+            if(decision == policy_deploy::ManualRequestDecision::feedback_invalid)
+                RCLCPP_WARN(get_logger(), "Ignoring mode request: required feedback is invalid; visually check stance and retry");
+            else if(decision == policy_deploy::ManualRequestDecision::busy)
+                RCLCPP_WARN(get_logger(), "Ignoring mode request: transition not idle; visually check stance and retry when idle");
+            else if(decision == policy_deploy::ManualRequestDecision::command_nonzero)
+                RCLCPP_WARN(get_logger(), "Ignoring mode request: commanded velocity must be zero; visually confirm the robot is stationary and retry");
+            else if(decision == policy_deploy::ManualRequestDecision::accept &&
+                    sample.requested_mode != _mixed_transition->active_mode())
+                _mixed_transition->request(sample.requested_mode);
+        }
+        const auto gated_command = _mixed_transition->advance(input);
+        publish_mixed_status(input.valid);
+        if(!input.valid)
+        {
+            RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
+                "Mixed policy stopped: required feedback is invalid or stale");
+            return false;
+        }
+        command->second = gated_command;
+        _inputs.mode_selectors = _mixed_selectors[_mixed_transition->active_mode()];
+        return true;
+    }
+
+    void filter_mixed_outputs()
+    {
+        Eigen::VectorXd target(12);
+        for(int i = 0; i < 12; ++i)
+            target[i] = _outputs->q_des[_mixed_info.joint_id_policy_to_robot[i]];
+        const auto filtered = _mixed_transition->filter(target, _mixed_lower, _mixed_upper, _mixed_velocity_limit);
+        for(int i = 0; i < 12; ++i)
+            _outputs->q_des[_mixed_info.joint_id_policy_to_robot[i]] = filtered[i];
+    }
+
     void fill_ctrl_mode()
     {
         for(int vi = 0; vi < _robot->getNv(); ++vi)
@@ -208,8 +372,19 @@ private:
 
         _adaptation_receiver->fill_inputs(_inputs);
 
-        // run policy
-        _policy->run(_inputs, outputs);
+        // Mixed-mode selection and guarded transitions run before observation assembly.
+        if(_mixed_transition && !prepare_mixed_step())
+        {
+            return;
+        }
+
+        // run policy, then apply the standing transition's physical target filter
+        if(!_policy->run(_inputs, outputs))
+        {
+            RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, "Policy inference failed; holding last reference");
+            return;
+        }
+        if(_mixed_transition) filter_mixed_outputs();
 
         // increment step counter
         _inputs.step++;
@@ -253,6 +428,13 @@ private:
         _robot->setPositionReference(_vec_nq);
         _robot->setVelocityReference(outputs.v_des);
         _robot->setEffortReference(outputs.tau_des);
+        if(!_policy_start_time_initialized)
+        {
+            // Startup may wait indefinitely for feedback or a valid pose. Start
+            // the gain window only after the first successful policy step.
+            _loop_start = t_start;
+            _policy_start_time_initialized = true;
+        }
         if(t_start - _loop_start < 1s)
         {
             // note: we stop sending impedance after one second,
@@ -273,6 +455,17 @@ private:
     bool _allow_missing_robot_joints{false};
     double _command_timeout_s{0.0};
     double _sensor_timeout_s{0.0};
+    int _mixed_initial_mode{-1};
+    XBot::policy::PolicyInfo _mixed_info{};
+    Eigen::Matrix3d _base_R_imu = Eigen::Matrix3d::Identity();
+    std::array<Eigen::VectorXd, 4> _mixed_references;
+    std::array<Eigen::Vector2d, 4> _mixed_selectors;
+    Eigen::VectorXd _mixed_lower, _mixed_upper, _mixed_velocity_limit;
+    std::unique_ptr<policy_deploy::RosMixedModeReceiver> _mixed_receiver;
+    std::unique_ptr<policy_deploy::MixedModeTransition> _mixed_transition;
+    std::unique_ptr<policy_deploy::MixedStartupGuard> _mixed_startup_guard;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr _mixed_status_publisher;
+    std::uint64_t _mixed_request_sequence{0};
     std::unique_ptr<XBot::policy::OnnxPolicy> _policy;
     std::unique_ptr<RosCommandReceiver> _command_receiver;
     std::unique_ptr<policy_deploy::RosAdaptationReceiver> _adaptation_receiver;
@@ -290,6 +483,7 @@ private:
     Eigen::VectorXd _vec_nq;
     Eigen::Matrix<uint8_t, Eigen::Dynamic, 1> _vec_nj;
     std::chrono::steady_clock::time_point _loop_start;
+    bool _policy_start_time_initialized{false};
     rclcpp::TimerBase::SharedPtr _timer;
 };
 

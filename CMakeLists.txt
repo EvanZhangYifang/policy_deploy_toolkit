@@ -18,6 +18,7 @@ add_library(policy_deploy_toolkit STATIC
     src/obs_term.cpp
     src/action_term.cpp
     src/command_term.cpp
+    src/mixed_mode_transition.cpp
 )
 
 target_include_directories(policy_deploy_toolkit
@@ -83,11 +84,35 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test/mujoco_policy_test.py"
                 "${CMAKE_CURRENT_BINARY_DIR}/python" "${CMAKE_CURRENT_SOURCE_DIR}"
         )
+        add_test(NAME mixed_mode_simulate_test
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test/mixed_mode_simulate_test.py"
+                "${CMAKE_CURRENT_BINARY_DIR}/python"
+        )
         add_test(NAME rollout_actions_test
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test/rollout_actions_test.py"
                 "${CMAKE_CURRENT_BINARY_DIR}/python"
         )
     endif()
+    add_executable(manual_mode_request_test test/manual_mode_request_test.cpp)
+    target_include_directories(manual_mode_request_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME manual_mode_request_test COMMAND manual_mode_request_test)
+
+    add_executable(mixed_startup_guard_test test/mixed_startup_guard_test.cpp)
+    target_include_directories(mixed_startup_guard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(mixed_startup_guard_test PRIVATE Eigen3::Eigen)
+    add_test(NAME mixed_startup_guard_test COMMAND mixed_startup_guard_test)
+
+    add_executable(mixed_mode_transition_test test/mixed_mode_transition_test.cpp)
+    target_link_libraries(mixed_mode_transition_test PRIVATE policy_deploy_toolkit)
+    target_compile_options(mixed_mode_transition_test PRIVATE -UNDEBUG)
+    add_test(NAME mixed_mode_transition_test COMMAND mixed_mode_transition_test)
+
+    add_executable(mixed_policy_runtime_test test/mixed_policy_runtime_test.cpp)
+    target_link_libraries(mixed_policy_runtime_test PRIVATE policy_deploy_toolkit)
+    if(DEFINED ENV{KYON_MIXED_BUNDLE})
+        add_test(NAME mixed_policy_runtime_test COMMAND mixed_policy_runtime_test "$ENV{KYON_MIXED_BUNDLE}")
+    endif()
+
     add_executable(command_filter_test test/command_filter_test.cpp)
     target_include_directories(command_filter_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(command_filter_test PRIVATE Eigen3::Eigen)
@@ -148,12 +173,12 @@ if(BUILD_ROS_NODE)
         src/ros_adaptation_receiver.cpp
         src/ros_command_receiver.cpp
         src/ros_sensor_receiver.cpp
+        src/ros_mixed_mode_receiver.cpp
     )
 
     target_link_libraries(deploy_policy_node
         PRIVATE
         policy_deploy_toolkit
-        xbot2_diagnostics::xbot2_diagnostics_ros
         xbot2::xbot2
         rclcpp::rclcpp
         tf2::tf2
@@ -167,6 +192,7 @@ if(BUILD_ROS_NODE)
         target_link_libraries(deploy_policy_node
             PRIVATE
             xbot2_diagnostics::xbot2_diagnostics
+            xbot2_diagnostics::xbot2_diagnostics_ros
         )
         target_compile_definitions(deploy_policy_node
             PRIVATE
@@ -197,6 +223,18 @@ if(BUILD_ROS_NODE)
     )
 
     if(BUILD_TESTING)
+        add_executable(ros_mixed_mode_receiver_test
+            test/ros_mixed_mode_receiver_test.cpp
+            src/ros_mixed_mode_receiver.cpp
+        )
+        target_include_directories(ros_mixed_mode_receiver_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_link_libraries(ros_mixed_mode_receiver_test PRIVATE
+            Eigen3::Eigen rclcpp::rclcpp
+            std_msgs::std_msgs__rosidl_typesupport_cpp
+        )
+        add_test(NAME ros_mixed_mode_receiver_test COMMAND ros_mixed_mode_receiver_test)
+        set_tests_properties(ros_mixed_mode_receiver_test PROPERTIES TIMEOUT 30)
+
         add_executable(ros_policy_term_publisher_test test/ros_policy_term_publisher_test.cpp)
         target_include_directories(ros_policy_term_publisher_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
         target_link_libraries(ros_policy_term_publisher_test PRIVATE
@@ -230,8 +268,11 @@ if(BUILD_ROS_NODE)
             tf2::tf2
             tf2_ros::tf2_ros
             sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
-            xbot2_diagnostics::xbot2_diagnostics_ros
         )
+        if(xbot2_diagnostics_FOUND)
+            target_link_libraries(ros_sensor_receiver_test PRIVATE xbot2_diagnostics::xbot2_diagnostics_ros)
+            target_compile_definitions(ros_sensor_receiver_test PRIVATE HAS_XBOT2_DIAGNOSTICS)
+        endif()
         add_test(NAME ros_sensor_receiver_test COMMAND ros_sensor_receiver_test)
         set_tests_properties(ros_sensor_receiver_test PROPERTIES TIMEOUT 30)
     endif()

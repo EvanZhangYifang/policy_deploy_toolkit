@@ -6,6 +6,7 @@ This folder is intended to be copied on its own. `policy.onnx` is the determinis
 
 - `policy.onnx`: deterministic 47-input, 12-output actor with normalization embedded.
 - `metadata.json`: policy contract, mode-specific references, selectors and model/checkpoint hashes.
+- `deploy_metadata.yaml`: the same policy contract in the mixed-mode `policy_deploy_toolkit` metadata format.
 - `test_vectors.json`: four checkpoint-derived observation/action pairs.
 - `verify_mixed_policy.py`: standalone ONNX Runtime verification of the model hash and all four vectors.
 - `standing_transition.py`: simulator controller source for reference only.
@@ -17,7 +18,7 @@ cd /path/to/exported_mixed_no_upper_body
 python verify_mixed_policy.py
 ```
 
-All four modes should report `PASS`. This checks inference equivalence for the supplied vectors; it does not validate the robot interface or physical behavior. This bundle uses custom `metadata.json` and is **not directly compatible with the unmodified `policy_deploy_toolkit`**. That toolkit needs the mode selector, mode-dependent reference and transition integration described below.
+All four modes should report `PASS`. This checks inference equivalence for the supplied vectors; it does not validate the robot interface or physical behavior. Use `deploy_metadata.yaml` with a version of `policy_deploy_toolkit` that supports mixed-mode policies and the ROS mode selector; older toolkit versions cannot load this policy. Consult the toolkit's instructions for the ROS interface.
 
 This policy controls the **12 leg joints only**. The upper body does not appear in its observation or action vectors. However, it was trained with the upper body physically present. Removing it changes mass, inertia and center of mass; export without upper-body joints is not evidence that the policy is safe or stable on a robot without the upper body. The policy was trained in fixed modes, not on mode transitions. `standing_transition.py` in this folder is a copy of the flat-ground simulation playback controller as a reference; it depends on Isaac Lab, PyTorch and the original package and is not a standalone or real-robot controller.
 
@@ -76,6 +77,8 @@ action = session.run(None, {name: obs})[0][0]  # shape (12,)
 The example only illustrates model invocation; zeros are not valid live robot measurements.
 
 ## Transition design from the simulation
+
+This section describes the original simulation controller. The deployment toolkit uses operator confirmation and IMU/joint feedback; it does not implement the simulator's contact-force or odometry checks.
 
 The standing transition is a **separate state machine** outside the ONNX graph. The following describes the simulation reference so another environment can implement it; it is not a validated hardware procedure. It assumes level ground and all four feet can remain planted. Before using anything on hardware, provide and validate joint position/velocity, correctly transformed gravity and angular velocity, body-frame linear velocity, world planar body position and heading, and per-foot contact/load estimates. A four-contact estimate and state estimator must be suitable for the physical robot. If any required input is missing, stale, inconsistent or unreliable, block transitions and follow the robot's safety controller. Tune and validate limits independently; the numeric values here are the simulation settings, not hardware safety limits.
 

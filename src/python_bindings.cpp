@@ -41,6 +41,12 @@ PYBIND11_MODULE(_bindings, m)
                 };
             });
 
+    py::class_<MixedMode>(m, "MixedMode")
+        .def(py::init<>())
+        .def_readwrite("name", &MixedMode::name)
+        .def_readwrite("selectors", &MixedMode::selectors)
+        .def_readwrite("joint_reference_rad", &MixedMode::joint_reference_rad);
+
     py::class_<PolicyInfo>(m, "PolicyInfo")
         .def(py::init<>())
         .def_readwrite("control_dt", &PolicyInfo::control_dt)
@@ -53,7 +59,9 @@ PYBIND11_MODULE(_bindings, m)
         .def_readwrite("joint_id_robot_to_policy", &PolicyInfo::joint_id_robot_to_policy)
         .def_readwrite("command_size", &PolicyInfo::command_size)
         .def_readwrite("action_size", &PolicyInfo::action_size)
-        .def_readwrite("height_scan_size", &PolicyInfo::height_scan_size);
+        .def_readwrite("height_scan_size", &PolicyInfo::height_scan_size)
+        .def_readwrite("mixed_modes", &PolicyInfo::mixed_modes)
+        .def_readwrite("mixed_action_scale", &PolicyInfo::mixed_action_scale);
 
     py::class_<CommandSpec>(m, "CommandSpec")
         .def(py::init<>())
@@ -90,6 +98,7 @@ PYBIND11_MODULE(_bindings, m)
         .def_readwrite("time_sec", &Inputs::time_sec)
         .def_readwrite("command", &Inputs::command)
         .def_readwrite("last_action", &Inputs::last_action)
+        .def_readwrite("mode_selectors", &Inputs::mode_selectors)
         .def_readwrite("q", &Inputs::q)
         .def_readwrite("v", &Inputs::v)
         .def_readwrite("tau", &Inputs::tau)
@@ -129,6 +138,7 @@ PYBIND11_MODULE(_bindings, m)
             py::arg("obs_group_override"), py::arg("robot_info"),
             py::arg("allow_missing_robot_joints") = false)
         .def("policyInfo", &OnnxPolicy::policyInfo)
+        .def("is_mixed_mode", &OnnxPolicy::is_mixed_mode)
         .def("command_specs", &OnnxPolicy::command_specs)
         .def("sensor_specs", &OnnxPolicy::sensor_specs)
         .def("recurrent_state_names", &OnnxPolicy::recurrent_state_names)

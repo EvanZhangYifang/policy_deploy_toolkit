@@ -493,3 +493,110 @@ TF. `sensor_timeout_s` bounds the wait from receipt; zero requires both to be
 immediately available. Invalid or expired scans retain the last valid scan,
 including existing stale-scan reuse behavior. Once consumed, a scan is not
 retransformed when the IMU orientation changes.
+
+## Four-mode leg policy and standing transitions
+
+The mixed BB/BF/FB/FF policy is a 47-input actor for the 12 leg joints. It uses
+mode-specific selectors and joint references. To export a compatible bundle,
+use `scripts/reinforcement_learning/rsl_rl/export_mixed_policy.py` in `kyon_rl`
+and copy its output directory into this environment. The bundle includes
+`policy.onnx` and `deploy_metadata.yaml` for this node, as well as the policy
+contract, checkpoint-derived inference vectors, and simulation-reference
+transition instructions. The unmodified `metadata.json` by itself is not the
+metadata expected by this C++ node.
+
+The MuJoCo runner can test a single mixed-policy mode using `--mode bb`,
+`--mode bf`, `--mode fb`, or `--mode ff`. A mode must be specified when
+loading a mixed policy; it remains fixed for the session and resets. The ROS
+transition state machine is not connected to the MuJoCo runner. For example:
+
+```bash
+python3 -m policy_deploy_toolkit.simulate \
+  --mjcf /path/to/scene.xml \
+  --policy /path/to/exported_mixed_no_upper_body/policy.onnx \
+  --mode bb
+```
+
+To launch the copied bundle as an installed example, place its files in
+`examples/exported_mixed_no_upper_body/`, rebuild the package and source the
+resulting ROS workspace overlay. The `joy` and `teleop_twist_joy` ROS packages
+must also be installed when joystick support is enabled. Before launching,
+visually check the robot is standing on all four feet on flat ground and has
+zero body velocity. In the first terminal:
+
+```bash
+ros2 launch policy_deploy_toolkit run_example.launch.xml \
+  example:=exported_mixed_no_upper_body enable_joy:=true use_sim_time:=false
+```
+
+The launch file reads the example from the **installed package share**. Rebuild
+and re-source after copying or changing its files unless the installation uses
+symlinks and already exposes them. It starts the policy node and joystick
+teleoperation; the robot/XBot2 parameter server, robot joint state and IMU
+must already be available. The joystick controls velocity, not the mode selector.
+
+The launch defaults to the BB starting mode. It checks the measured joint pose,
+position reference, IMU orientation and angular velocity, and joint velocities
+before starting control; it does not move the robot into BB. The operator must
+visually confirm foot support and zero body velocity: **the controller does not
+measure foot contact or body linear motion and cannot detect support loss or
+drift**. If the robot starts in another mode, add `initial_mode:=bf`,
+`initial_mode:=fb`, or `initial_mode:=ff` to the launch command. To select the
+actual starting mode through the first selector message instead, set
+`initial_mode:=` and send that mode before requesting a change.
+
+Before every mode request, visually confirm the robot is standing on all four
+feet on flat ground and is stationary; set the commanded velocity to zero.
+Sending the selector confirms this visual check. Requests sent before startup
+completes, while a transition is running, or with a nonzero commanded velocity
+are rejected. When status reports `phase=idle`, recheck stance and resend.
+The controller keeps the policy velocity command zero throughout the transition.
+
+In a second terminal with the ROS environment sourced, request BF with:
+
+```bash
+ros2 topic pub --once /policy_deploy_node/mode_selectors \
+  std_msgs/msg/Float64MultiArray '{data: [-1.0, 1.0]}'
+ros2 topic echo /policy_deploy_node/transition/status
+```
+
+For BB use `[-1.0, -1.0]`, FB use `[1.0, -1.0]`, and FF use `[1.0, 1.0]`.
+The final mode remains selected without repeatedly publishing the selector.
+
+Alternatively start the node directly, passing the mixed bundle paths:
+
+```bash
+ros2 run policy_deploy_toolkit deploy_policy_node \
+  /path/to/exported_mixed_no_upper_body/policy.onnx \
+  /path/to/exported_mixed_no_upper_body/deploy_metadata.yaml
+```
+
+The node needs the XBot2 ROS parameter tree and a robot interface as described
+above. Set `initial_mode` to match the actual initial pose. Measured leg
+positions and active position references must be within 0.3 rad of that mode's
+reference on every joint at startup. Joint and angular velocities and upright
+attitude must meet the stillness checks for at least 0.14 s. The default is BB;
+this does not move the robot into that pose.
+
+| Private ROS topic | Message | Meaning |
+|---|---|---|
+| `~/mode_selectors` | `std_msgs/msg/Float64MultiArray` | Two values `[front, rear]`, each `-1` or `+1`: BB `[-1,-1]`, BF `[-1,1]`, FB `[1,-1]`, FF `[1,1]`. Every valid message is a mode request. |
+| `~/transition/status` | `std_msgs/msg/String` | Transition phase, active mode index (BB/BF/FB/FF = 0/1/2/3), blend fraction and reason. `support_check=manual_not_monitored` indicates contact is not sensed. |
+
+The selector subscription uses ROS 2 QoS depth 1 and best-effort reliability;
+compatible reliable publishers can communicate with it. The status publisher
+uses depth 10 and reliable reliability. A blocked transition requires
+stopping/restarting the deployment node after the robot is safely stabilized;
+the toolkit does not provide a physical fall-recovery controller.
+
+The controller is ported from a flat-ground simulator and uses its simulated
+thresholds, gait geometry and posture corrections. The bundled
+`standing_transition.py` describes the original simulator reference, which has
+additional sensor checks; those checks are not part of this toolkit controller.
+It cannot verify four-foot support or body velocity; the operator's visual check does not replace sensing.
+Validate robot joint signs and feedback for the target robot. The policy was
+trained with the upper body physically attached; removing it changes mass,
+inertia and center of mass. Validate fixed-mode control and transitions in the
+target simulation and under an independently designed hardware safety controller
+before physical use. The supplied longer simulation showed gradual body lean
+and does not establish that standing oscillations are resolved.

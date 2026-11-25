@@ -9,7 +9,9 @@
 #include <utility>
 #include <variant>
 
+#ifdef HAS_XBOT2_DIAGNOSTICS
 #include <xbot2_diagnostics/ros2_publisher.h>
+#endif
 
 namespace policy_deploy {
 
@@ -192,6 +194,7 @@ void RosSensorReceiver::create_height_scan_subscription(const XBot::policy::Heig
     state.stamp = _node.now();
     _height_scan_states.emplace(spec.name, std::move(state));
 
+#ifdef HAS_XBOT2_DIAGNOSTICS
     auto stats_pub = std::make_shared<XBot::diagnostics::Ros2StatsPublisher>(
         _node,
         std::format("/controller/{}/{}/delay", _node.get_name(), spec.name),
@@ -199,18 +202,25 @@ void RosSensorReceiver::create_height_scan_subscription(const XBot::policy::Heig
         "delay",
         1.0
     );
+#endif
 
     using Message = sensor_msgs::msg::PointCloud2;
     const auto topic = "~/sensors/" + spec.name + "/points";
     auto subscription = _node.create_subscription<Message>(
         topic,
         rclcpp::SensorDataQoS().keep_last(1).best_effort(),
-        [this, name = spec.name, stats_pub](Message::ConstSharedPtr msg) {
+        [this, name = spec.name
+#ifdef HAS_XBOT2_DIAGNOSTICS
+         , stats_pub
+#endif
+        ](Message::ConstSharedPtr msg) {
+#ifdef HAS_XBOT2_DIAGNOSTICS
             if(msg->header.stamp.sec >= 0)
             {
                 const auto stamp = rclcpp::Time(msg->header.stamp, _node.get_clock()->get_clock_type());
                 stats_pub->update_and_publish((_node.now() - stamp).seconds());
             }
+#endif
             store_height_scan(name, *msg);
         });
 

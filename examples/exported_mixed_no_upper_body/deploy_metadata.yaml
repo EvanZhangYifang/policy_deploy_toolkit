@@ -1,0 +1,265 @@
+default_joint_pos:
+- 0.15
+- -0.7
+- 1.4
+- -0.15
+- 0.7
+- -1.4
+- -0.15
+- -0.7
+- 1.4
+- 0.15
+- 0.7
+- -1.4
+default_joint_vel:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+joint_names:
+- hip_roll_1
+- hip_pitch_1
+- knee_pitch_1
+- hip_roll_2
+- hip_pitch_2
+- knee_pitch_2
+- hip_roll_3
+- hip_pitch_3
+- knee_pitch_3
+- hip_roll_4
+- hip_pitch_4
+- knee_pitch_4
+joint_stiffness:
+- 300.0
+- 300.0
+- 300.0
+- 300.0
+- 300.0
+- 300.0
+- 300.0
+- 300.0
+- 300.0
+- 300.0
+- 300.0
+- 300.0
+joint_damping:
+- 10.0
+- 10.0
+- 10.0
+- 10.0
+- 10.0
+- 10.0
+- 10.0
+- 10.0
+- 10.0
+- 10.0
+- 10.0
+- 10.0
+fixed_joints: []
+ctrl_dt: 0.02
+default_obs_group: policy
+mixed_modes:
+  bb:
+    selectors:
+    - -1.0
+    - -1.0
+    joint_reference_rad:
+    - 0.15
+    - -0.7
+    - 1.4
+    - -0.15
+    - 0.7
+    - -1.4
+    - -0.15
+    - -0.7
+    - 1.4
+    - 0.15
+    - 0.7
+    - -1.4
+  bf:
+    selectors:
+    - -1.0
+    - 1.0
+    joint_reference_rad:
+    - 0.15
+    - -0.7
+    - 1.4
+    - -0.15
+    - 0.7
+    - -1.4
+    - -0.15
+    - 0.7
+    - -1.4
+    - 0.15
+    - -0.7
+    - 1.4
+  fb:
+    selectors:
+    - 1.0
+    - -1.0
+    joint_reference_rad:
+    - 0.15
+    - 0.7
+    - -1.4
+    - -0.15
+    - -0.7
+    - 1.4
+    - -0.15
+    - -0.7
+    - 1.4
+    - 0.15
+    - 0.7
+    - -1.4
+  ff:
+    selectors:
+    - 1.0
+    - 1.0
+    joint_reference_rad:
+    - 0.15
+    - 0.7
+    - -1.4
+    - -0.15
+    - -0.7
+    - 1.4
+    - -0.15
+    - 0.7
+    - -1.4
+    - 0.15
+    - -0.7
+    - 1.4
+observations:
+  policy:
+    base_ang_vel:
+      cfg:
+        func: isaaclab.envs.mdp.observations:base_ang_vel
+        params: {}
+        clip:
+        - -100.0
+        - 100.0
+        scale: null
+        history_length: 0
+    projected_gravity:
+      cfg:
+        func: isaaclab.envs.mdp.observations:projected_gravity
+        params: {}
+        clip:
+        - -100.0
+        - 100.0
+        scale: null
+        history_length: 0
+    velocity_commands:
+      cfg:
+        func: isaaclab.envs.mdp.observations:generated_commands
+        params:
+          command_name: base_velocity
+        clip:
+        - -100.0
+        - 100.0
+        scale: null
+        history_length: 0
+    joint_pos:
+      cfg:
+        func: isaaclab.envs.mdp.observations:joint_pos_rel
+        params:
+          asset_cfg:
+            joint_ids:
+            - 0
+            - 1
+            - 2
+            - 3
+            - 4
+            - 5
+            - 6
+            - 7
+            - 8
+            - 9
+            - 10
+            - 11
+        clip:
+        - -100.0
+        - 100.0
+        scale: null
+        history_length: 0
+    joint_vel:
+      cfg:
+        func: isaaclab.envs.mdp.observations:joint_vel_rel
+        params:
+          asset_cfg:
+            joint_ids:
+            - 0
+            - 1
+            - 2
+            - 3
+            - 4
+            - 5
+            - 6
+            - 7
+            - 8
+            - 9
+            - 10
+            - 11
+        clip:
+        - -100.0
+        - 100.0
+        scale: null
+        history_length: 0
+    actions:
+      cfg:
+        func: isaaclab.envs.mdp.observations:last_action
+        params: {}
+        clip:
+        - -100.0
+        - 100.0
+        scale: null
+        history_length: 0
+    mode_selectors:
+      cfg:
+        func: kyon_training.tasks.locomotion.velocity_legged.config.kyon_legged_full_mixed_v0.mdp:mode_selectors
+        params: {}
+        clip: null
+        scale: null
+        history_length: 0
+actions:
+  joint_pos:
+    cfg:
+      class_type: isaaclab.envs.mdp.actions.joint_actions:JointPositionAction
+      joint_names:
+      - hip_roll_1
+      - hip_pitch_1
+      - knee_pitch_1
+      - hip_roll_2
+      - hip_pitch_2
+      - knee_pitch_2
+      - hip_roll_3
+      - hip_pitch_3
+      - knee_pitch_3
+      - hip_roll_4
+      - hip_pitch_4
+      - knee_pitch_4
+      scale: 0.5
+      offset: 0.0
+      clip: null
+      preserve_order: false
+      use_default_offset: true
+commands:
+  base_velocity:
+    class_type: kyon_isaac.tasks.locomotion.velocity.mdp.commands:VelocityCommand
+    ranges:
+      lin_vel_x:
+      - -2.0
+      - 2.0
+      lin_vel_y:
+      - -1.0
+      - 1.0
+      ang_vel_z:
+      - -1.0
+      - 1.0
+scene: {}

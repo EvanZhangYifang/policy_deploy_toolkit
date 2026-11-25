@@ -21,6 +21,10 @@ std::unique_ptr<ObsTerm> ObsTerm::create(std::string func, RobotInfo robot_info,
     {
         return std::make_unique<IsaacLabGeneratedCommandsObsTerm>(robot_info, policy_info, config);
     }
+    else if(func == "kyon_training.tasks.locomotion.velocity_legged.config.kyon_legged_full_mixed_v0.mdp:mode_selectors")
+    {
+        return std::make_unique<MixedModeSelectorsObsTerm>(robot_info, policy_info, config);
+    }
     else if(func == "isaaclab.envs.mdp.observations:joint_pos_rel")
     {
         return std::make_unique<IsaacLabJointPosRelObsTerm>(robot_info, policy_info, config);
@@ -200,8 +204,24 @@ void IsaacLabJointPosRelObsTerm::process_impl(const Inputs& inputs, Eigen::Vecto
             throw std::runtime_error(
                 "JointPosRel observation references policy joint '" + _policy_info.joint_names[policy_id] + "' with no robot mapping");
         }
-        output(i) = inputs.q(robot_id) - _policy_info.joint_default_pos[policy_id];
+        const auto& reference = _policy_info.mixed_modes.empty()
+            ? _policy_info.joint_default_pos
+            : mixed_mode_for_selectors(_policy_info, inputs.mode_selectors).joint_reference_rad;
+        output(i) = inputs.q(robot_id) - reference.at(policy_id);
     }
+}
+
+MixedModeSelectorsObsTerm::MixedModeSelectorsObsTerm(RobotInfo robot_info, PolicyInfo policy_info, YAML::Node config)
+    : ObsTerm(std::move(robot_info), std::move(policy_info), config)
+{
+    if(_policy_info.mixed_modes.empty()) throw std::runtime_error("Mode selector observation requires mixed_modes metadata");
+    _size = 2;
+}
+
+void MixedModeSelectorsObsTerm::process_impl(const Inputs& inputs, Eigen::VectorXd& output)
+{
+    const auto& mode = mixed_mode_for_selectors(_policy_info, inputs.mode_selectors);
+    output = mode.selectors;
 }
 
 KyonIsaacJointPosErrorObsTerm::KyonIsaacJointPosErrorObsTerm(RobotInfo robot_info,

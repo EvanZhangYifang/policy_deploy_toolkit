@@ -4,6 +4,8 @@
 #include <Eigen/Dense>
 #include <functional>
 #include <map>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -19,6 +21,12 @@ struct RobotInfo {
     std::function<Eigen::Affine3d(const std::string&)> body_pose_in_base;
 };
 
+struct MixedMode {
+    std::string name;
+    Eigen::Vector2d selectors;
+    std::vector<double> joint_reference_rad;
+};
+
 struct PolicyInfo {
     double control_dt;
     std::vector<std::string> joint_names;
@@ -30,7 +38,19 @@ struct PolicyInfo {
     std::map<std::string, int> command_size;
     int action_size;
     int height_scan_size;
+    std::vector<MixedMode> mixed_modes;
+    double mixed_action_scale = 0.0;
 };
+
+// Returns the unique configured mode for an exact, validated selector pair.
+inline const MixedMode& mixed_mode_for_selectors(const PolicyInfo& info, const Eigen::Vector2d& selectors)
+{
+    for(const auto& mode : info.mixed_modes)
+    {
+        if((mode.selectors.array() == selectors.array()).all()) return mode;
+    }
+    throw std::runtime_error("Unrecognized mixed-policy mode selectors");
+}
 
 // A named contiguous slice of the model observation or action vector.
 struct PolicyTermSpec {
@@ -45,6 +65,8 @@ struct Inputs {
 
     std::map<std::string, Eigen::VectorXd> command; 
     Eigen::VectorXd last_action;
+    // Valid selector is required for mixed policies; no default mode is assumed.
+    Eigen::Vector2d mode_selectors = Eigen::Vector2d::Constant(std::numeric_limits<double>::quiet_NaN());
 
     Eigen::VectorXd q; 
     Eigen::VectorXd v; 

@@ -31,6 +31,8 @@ OnnxPolicy(std::string model_path,
 
 PolicyInfo policyInfo() const;
 
+bool is_mixed_mode() const;
+
 const std::vector<CommandSpec>& command_specs() const;
 
 const std::vector<SensorSpec>& sensor_specs() const;
