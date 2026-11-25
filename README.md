@@ -522,9 +522,15 @@ To launch the copied bundle as an installed example, place its files in
 resulting ROS workspace overlay. The `joy` and `teleop_twist_joy` ROS packages
 must also be installed when joystick support is enabled. Before launching,
 visually check the robot is standing on all four feet on flat ground and has
-zero body velocity. In the first terminal:
+zero body velocity. For the existing `/home/user/xbot2_ws` build, rebuild and
+install the package, then launch it in the first terminal:
 
 ```bash
+source /opt/ros/jazzy/setup.bash
+source /home/user/xbot2_ws/setup.bash
+cmake --build /home/user/xbot2_ws/build/policy_deploy_toolkit -j
+cmake --install /home/user/xbot2_ws/build/policy_deploy_toolkit
+source /home/user/xbot2_ws/setup.bash
 ros2 launch policy_deploy_toolkit run_example.launch.xml \
   example:=exported_mixed_no_upper_body enable_joy:=true use_sim_time:=false
 ```
@@ -540,6 +546,27 @@ button indices 2, 3, 1, and 0 respectively. For a different controller, inspect
 `mode_button_bf`, `mode_button_fb`, and `mode_button_ff` to distinct indices.
 Release and press a button again to retry a rejected request; simultaneous face
 buttons are ignored. The `/joy` topic can be remapped when launching the node.
+To inspect joystick button indices and transition status, run in another
+terminal:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /home/user/xbot2_ws/setup.bash
+ros2 topic echo /joy
+# In a separate terminal:
+ros2 topic echo /policy_deploy_node/transition/status
+```
+
+For example, to use different button indices, append them to the launch command:
+
+```bash
+ros2 launch policy_deploy_toolkit run_example.launch.xml \
+  example:=exported_mixed_no_upper_body enable_joy:=true use_sim_time:=false \
+  mode_button_bb:=2 mode_button_bf:=3 mode_button_fb:=1 mode_button_ff:=0
+```
+
+Replace the indices with those reported by `/joy` for your controller. The
+example above shows the defaults.
 
 The launch defaults to the BB starting mode. It checks the measured joint pose,
 position reference, IMU orientation and angular velocity, and joint velocities
