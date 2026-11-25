@@ -1,0 +1,204 @@
+{
+  "format": "kyon_four_mode_actor_v1",
+  "toolkit_compatible_without_modification": false,
+  "source_checkpoint": "model_9999.pt",
+  "source_checkpoint_sha256": "1213e6e00050db238576b2490fb4640929c241aa23f5995d320969c32b7b29f4",
+  "source_iteration": 9999,
+  "policy_onnx_sha256": "2c2eba9bc90e980cba754b64ab43f6f4791e0f5911dcc3e3e5576e39e0810dab",
+  "onnx": {
+    "input_name": "obs",
+    "input_shape": [
+      1,
+      47
+    ],
+    "output_name": "actions",
+    "output_shape": [
+      1,
+      12
+    ],
+    "input_dtype": "float32",
+    "output_dtype": "float32",
+    "opset": 18,
+    "normalization_embedded": true
+  },
+  "control_period_sec": 0.02,
+  "joint_names": [
+    "hip_roll_1",
+    "hip_pitch_1",
+    "knee_pitch_1",
+    "hip_roll_2",
+    "hip_pitch_2",
+    "knee_pitch_2",
+    "hip_roll_3",
+    "hip_pitch_3",
+    "knee_pitch_3",
+    "hip_roll_4",
+    "hip_pitch_4",
+    "knee_pitch_4"
+  ],
+  "observation_terms": [
+    {
+      "name": "base_ang_vel",
+      "start": 0,
+      "size": 3,
+      "unit": "rad/s",
+      "frame": "body"
+    },
+    {
+      "name": "projected_gravity",
+      "start": 3,
+      "size": 3,
+      "unit": "unit vector",
+      "frame": "body"
+    },
+    {
+      "name": "velocity_commands",
+      "start": 6,
+      "size": 3,
+      "order": [
+        "vx_m_s",
+        "vy_m_s",
+        "yaw_rate_rad_s"
+      ],
+      "frame": "body"
+    },
+    {
+      "name": "joint_pos_relative_to_mode_reference",
+      "start": 9,
+      "size": 12,
+      "unit": "rad"
+    },
+    {
+      "name": "joint_vel_relative_to_zero",
+      "start": 21,
+      "size": 12,
+      "unit": "rad/s"
+    },
+    {
+      "name": "previous_applied_action",
+      "start": 33,
+      "size": 12,
+      "unit": "raw_action"
+    },
+    {
+      "name": "mode_selectors",
+      "start": 45,
+      "size": 2,
+      "order": [
+        "front",
+        "rear"
+      ]
+    }
+  ],
+  "observation_clip_except_mode_selectors": [
+    -100.0,
+    100.0
+  ],
+  "observation_term_scale": 1.0,
+  "modes": {
+    "bb": {
+      "selectors": [
+        -1.0,
+        -1.0
+      ],
+      "joint_reference_rad": [
+        0.15,
+        -0.7,
+        1.4,
+        -0.15,
+        0.7,
+        -1.4,
+        -0.15,
+        -0.7,
+        1.4,
+        0.15,
+        0.7,
+        -1.4
+      ]
+    },
+    "bf": {
+      "selectors": [
+        -1.0,
+        1.0
+      ],
+      "joint_reference_rad": [
+        0.15,
+        -0.7,
+        1.4,
+        -0.15,
+        0.7,
+        -1.4,
+        -0.15,
+        0.7,
+        -1.4,
+        0.15,
+        -0.7,
+        1.4
+      ]
+    },
+    "fb": {
+      "selectors": [
+        1.0,
+        -1.0
+      ],
+      "joint_reference_rad": [
+        0.15,
+        0.7,
+        -1.4,
+        -0.15,
+        -0.7,
+        1.4,
+        -0.15,
+        -0.7,
+        1.4,
+        0.15,
+        0.7,
+        -1.4
+      ]
+    },
+    "ff": {
+      "selectors": [
+        1.0,
+        1.0
+      ],
+      "joint_reference_rad": [
+        0.15,
+        0.7,
+        -1.4,
+        -0.15,
+        -0.7,
+        1.4,
+        -0.15,
+        0.7,
+        -1.4,
+        0.15,
+        -0.7,
+        1.4
+      ]
+    }
+  },
+  "action": {
+    "size": 12,
+    "scale": 0.5,
+    "offset": "selected_mode_joint_reference_rad",
+    "clip": null,
+    "formula": "joint_target_rad = mode_reference_rad + 0.5 * raw_action"
+  },
+  "training_leg_actuator": {
+    "hip_roll_motors": {
+      "stiffness": 300,
+      "damping": 10
+    },
+    "hip_pitch_motors": {
+      "stiffness": 300,
+      "damping": 10
+    },
+    "knee_pitch_motors": {
+      "stiffness": 300,
+      "damping": 10
+    }
+  },
+  "training_leg_actuator_note": "Simulation configuration; not hardware gain recommendations.",
+  "training_robot": "full body attached; actor observes and controls only leg joints",
+  "upper_body_joints_in_export": false
+}
